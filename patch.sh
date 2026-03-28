@@ -6,7 +6,6 @@ set -e
 
 CHROME_DIR="/Users/$(whoami)/Library/Application Support/Google/Chrome"
 LOCAL_STATE="$CHROME_DIR/Local State"
-PREFS="$CHROME_DIR/Profile 2/Preferences"
 
 echo "🔍 检查 VPN..."
 COUNTRY=$(curl -s --max-time 5 https://ipinfo.io/country 2>/dev/null | tr -d '\n')
@@ -22,10 +21,12 @@ sleep 2
 
 echo "🔧 打补丁..."
 python3 << 'PYEOF'
-import json, sys
+import json, os, glob
+
+chrome_dir = f"/Users/{os.getenv('USER')}/Library/Application Support/Google/Chrome"
 
 # === Local State ===
-ls_path = "/Users/" + __import__('os').getenv('USER') + "/Library/Application Support/Google/Chrome/Local State"
+ls_path = f"{chrome_dir}/Local State"
 with open(ls_path) as f:
     ls = json.load(f)
 
@@ -42,21 +43,34 @@ with open(ls_path, 'w') as f:
     json.dump(ls, f, separators=(',', ':'))
 print(f"  Local State: {count} 个 Profile 已设 is_glic_eligible=True")
 
-# === Preferences ===
-prefs_path = "/Users/" + __import__('os').getenv('USER') + "/Library/Application Support/Google/Chrome/Profile 2/Preferences"
-with open(prefs_path) as f:
-    prefs = json.load(f)
+# === Preferences（遍历所有 Profile）===
+prefs_files = glob.glob(f"{chrome_dir}/*/Preferences") + glob.glob(f"{chrome_dir}/Default/Preferences")
+# 去重
+prefs_files = list(set(prefs_files))
 
-prefs.setdefault('glic', {})['completed_fre'] = 1
+patched = 0
+for prefs_path in prefs_files:
+    try:
+        with open(prefs_path) as f:
+            prefs = json.load(f)
 
-iph = prefs.get('in_product_help', {}).get('snoozed_feature', {}).get('IPH_GlicTryIt', {})
-if iph:
-    iph['is_dismissed'] = False
-    print("  Preferences: IPH_GlicTryIt dismissed 已重置")
+        prefs.setdefault('glic', {})['completed_fre'] = 1
 
-with open(prefs_path, 'w') as f:
-    json.dump(prefs, f, separators=(',', ':'))
-print("  Preferences: glic.completed_fre=1")
+        iph = prefs.get('in_product_help', {}).get('snoozed_feature', {}).get('IPH_GlicTryIt', {})
+        if iph:
+            iph['is_dismissed'] = False
+
+        with open(prefs_path, 'w') as f:
+            json.dump(prefs, f, separators=(',', ':'))
+
+        profile_name = prefs_path.split('/')[-2]
+        print(f"  ✅ {profile_name}: glic.completed_fre=1")
+        patched += 1
+    except Exception as e:
+        profile_name = prefs_path.split('/')[-2]
+        print(f"  ⚠️  {profile_name}: 跳过 ({e})")
+
+print(f"  共修改 {patched} 个 Profile")
 PYEOF
 
 echo "🚀 启动 Chrome..."
